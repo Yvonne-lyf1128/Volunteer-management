@@ -1,0 +1,14 @@
+{
+  "name": "volunteer-points-platform",
+  "version": "2.0.0",
+  "description": "青羽引领志愿者管理平台",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}

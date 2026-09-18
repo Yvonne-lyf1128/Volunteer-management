@@ -8,8 +8,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 中间件
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(cors());应用.使用(跨域());
+app.use(express.json({ limit: '10mb' }));应用.使用(express.json({ 限制: '10mb' }));
 
 // 静态文件：优先 public/，回退到根目录
 const publicDir = path.join(__dirname, 'public');

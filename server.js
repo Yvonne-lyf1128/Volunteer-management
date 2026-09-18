@@ -322,8 +322,14 @@ app.post('/api/admin/change-password', (req, res) => {
 });
 
 // 所有其他路由返回前端页面
+app.get('/health', (req, res) => { res.json({ status: 'ok' }); });
+
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const p1 = path.join(__dirname, 'public', 'index.html');
+  const p2 = path.join(__dirname, 'index.html');
+  if (fs.existsSync(p1)) res.sendFile(p1);
+  else if (fs.existsSync(p2)) res.sendFile(p2);
+  else res.status(404).send('Not found');
 });
 
 // 启动服务器

@@ -675,7 +675,10 @@
         <div class="card">
           <div class="card-title">
             <span class="title-left">✅ 兑换核销管理</span>
-            <button class="btn btn-sm btn-secondary" onclick="loadRedeemRecords()">🔄 刷新</button>
+            <div>
+              <button class="btn btn-sm btn-primary" onclick="showVoucherModal()">🎫 发放兑换券</button>
+              <button class="btn btn-sm btn-secondary" onclick="loadRedeemRecords()">🔄 刷新</button>
+            </div>
           </div>
           <div id="aRedeemManage"><div class="empty-tip">加载中...</div></div>
         </div>
@@ -692,6 +695,35 @@
             </div>
             <button class="btn btn-primary" id="hoursToggleBtn" onclick="toggleHoursSubmission()" style="white-space:nowrap;">开启提交</button>
           </div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="title-left">📥 导入数据</span></div>
+          <div style="font-size:13px;color:#006d9c;font-weight:600;margin-bottom:6px;">① 恢复 JSON 备份（含时长与兑换记录）</div>
+          <input type="file" id="backupFile" accept=".json,application/json" style="display:none" onchange="handleBackupFile(event)">
+          <button class="btn btn-outline btn-block" onclick="document.getElementById('backupFile').click()">📂 选择备份文件（.json）</button>
+          <div id="backupPreview" style="display:none;margin-top:10px;">
+            <div id="backupSummary" style="font-size:13px;color:#666;background:#f0f7fb;border-radius:8px;padding:10px;margin-bottom:8px;line-height:1.8;"></div>
+            <button class="btn btn-success btn-block" onclick="doImportBackup('merge')">➕ 合并导入（保留现有数据，同学号跳过）</button>
+            <button class="btn btn-danger btn-block" onclick="doImportBackup('replace')" style="margin-top:6px;">♻️ 覆盖导入（清空现有数据后恢复）</button>
+          </div>
+          <div style="border-top:1px dashed #ddd;margin:14px 0;"></div>
+          <div style="font-size:13px;color:#006d9c;font-weight:600;margin-bottom:6px;">② 批量导入志愿者名单（支持密码与历史时长）</div>
+          <div style="font-size:12px;color:#999;margin-bottom:6px;line-height:1.6;">
+            每行一个：<strong>姓名,学号,密码(可选),历史时长(可选),活动名称(可选)</strong><br>
+            密码留空则默认为 qy2026；填写历史时长会自动补录一条时长记录（1小时=10积分）<br>
+            例：张三,20240101 &nbsp;|&nbsp; 李四,20240102,abc123,12.5,迎新晚会
+          </div>
+          <textarea id="csvText" rows="4" placeholder="张三,20240101&#10;李四,20240102,abc123,12.5,迎新晚会&#10;王五,20240103,,8" style="width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;resize:vertical;"></textarea>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#666;margin-top:8px;cursor:pointer;">
+            <input type="checkbox" id="csvUpdateExisting">
+            学号已存在时：更新其密码并补录时长（用于信息丢失的志愿者重新设置密码）
+          </label>
+          <input type="file" id="csvFile" accept=".csv,.txt" style="display:none" onchange="handleCsvFile(event)">
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn btn-outline" style="flex:1;" onclick="document.getElementById('csvFile').click()">📄 读取CSV文件</button>
+            <button class="btn btn-primary" style="flex:1;" onclick="importVolunteerList()">⬆️ 导入名单</button>
+          </div>
+          <div id="importResult" style="display:none;font-size:13px;margin-top:10px;background:#f6fff6;border:1px solid #c8e6c9;border-radius:8px;padding:10px;line-height:1.8;"></div>
         </div>
         <div class="card">
           <div class="card-title"><span class="title-left">📤 导出数据</span></div>
@@ -727,6 +759,8 @@
     <div class="detail-section"><h4>⏱️ 时长记录</h4><div id="detailHoursList"></div></div>
     <div class="detail-section"><h4>🎟️ 兑换记录</h4><div id="detailRedeemList"></div></div>
     <div class="modal-actions">
+      <button style="background:#2a9d8f;color:#fff;" onclick="showEditVolModal()">✏️ 编辑</button>
+      <button style="background:#7c5cbf;color:#fff;" onclick="showAddHoursModal()">➕ 补录时长</button>
       <button style="background:#0099cc;color:#fff;" onclick="showResetPwdModal()">🔑 重置密码</button>
       <button style="background:#e76f51;color:#fff;" onclick="deleteVolunteer()">删除</button>
       <button style="background:#e8f4f8;color:#006d9c;" onclick="closeModal('volDetailModal')">关闭</button>
@@ -743,6 +777,54 @@
     <div class="modal-actions">
       <button style="background:#e8f4f8;color:#006d9c;" onclick="closeModal('resetPwdModal')">取消</button>
       <button style="background:linear-gradient(135deg,#0099cc,#006d9c);color:#fff;" onclick="confirmResetPwd()">确认重置</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑志愿者弹窗 -->
+<div class="modal-mask" id="editVolModal">
+  <div class="modal">
+    <h3>✏️ 编辑志愿者信息</h3>
+    <div class="form-group"><label>姓名</label><input type="text" id="editVolName" placeholder="姓名" maxlength="20"></div>
+    <div class="form-group"><label>学号</label><input type="text" id="editVolSid" placeholder="学号" maxlength="30"></div>
+    <div class="modal-actions">
+      <button style="background:#e8f4f8;color:#006d9c;" onclick="closeModal('editVolModal')">取消</button>
+      <button style="background:linear-gradient(135deg,#2a9d8f,#1d7a6f);color:#fff;" onclick="confirmEditVol()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- 补录时长弹窗 -->
+<div class="modal-mask" id="addHoursModal">
+  <div class="modal">
+    <h3>➕ 补录志愿时长</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">为 <strong id="addHoursName"></strong> 补录历史时长（1小时 = 10积分）</p>
+    <div class="form-group"><label>活动名称</label><input type="text" id="addHoursActivity" placeholder="例如：迎新晚会志愿服务" maxlength="40"></div>
+    <div class="form-group"><label>日期</label><input type="date" id="addHoursDate"></div>
+    <div class="form-group"><label>时长（小时）</label><input type="number" id="addHoursValue" placeholder="例如：2.5" min="0.5" step="0.5"></div>
+    <div class="modal-actions">
+      <button style="background:#e8f4f8;color:#006d9c;" onclick="closeModal('addHoursModal')">取消</button>
+      <button style="background:linear-gradient(135deg,#7c5cbf,#5a3d99);color:#fff;" onclick="confirmAddHours()">确认补录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 发放兑换券弹窗 -->
+<div class="modal-mask" id="voucherModal">
+  <div class="modal">
+    <h3>🎫 发放兑换券</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">直接给志愿者发放奖品兑换券，<strong>不扣积分</strong>，自动生成兑换码，志愿者凭码核销领取</p>
+    <div class="form-group"><label>选择志愿者</label><select id="voucherVol" style="width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:14px;"></select></div>
+    <div class="form-group"><label>选择奖品</label><select id="voucherPrize" style="width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:14px;"></select></div>
+    <div class="form-group"><label>备注（可选）</label><input type="text" id="voucherRemark" placeholder="例如：迎新活动优秀志愿者奖励" maxlength="50"></div>
+    <div id="voucherResult" style="display:none;background:#f0f7fb;border-radius:8px;padding:14px;margin-bottom:12px;text-align:center;">
+      <div style="font-size:12px;color:#666;">兑换券已发放，兑换码：</div>
+      <div id="voucherCode" style="font-size:28px;font-weight:700;letter-spacing:3px;color:#006d9c;margin:6px 0;"></div>
+      <div style="font-size:12px;color:#999;">志愿者可在「我的兑换」中查看此券</div>
+    </div>
+    <div class="modal-actions">
+      <button style="background:#e8f4f8;color:#006d9c;" onclick="closeModal('voucherModal')">关闭</button>
+      <button style="background:linear-gradient(135deg,#0099cc,#006d9c);color:#fff;" onclick="confirmVoucher()" id="voucherConfirmBtn">确认发放</button>
     </div>
   </div>
 </div>
@@ -1049,11 +1131,12 @@ function renderVRedeem(records) {
   el.innerHTML = records.map(r => `
     <div class="record-item">
       <div class="record-left">
-        <div class="record-title">${r.prizeName} <span class="status-tag ${r.status==='redeemed'?'status-redeemed':'status-pending'}">${r.status==='redeemed'?'已核销':'待核销'}</span></div>
-        <div class="record-sub">${r.date}</div>
+        <div class="record-title">${r.prizeName}${r.type === 'voucher' ? ' <span class="status-tag" style="background:#7c5cbf;color:#fff;">🎫 管理员发放</span>' : ''} <span class="status-tag ${r.status==='redeemed'?'status-redeemed':'status-pending'}">${r.status==='redeemed'?'已核销':'待核销'}</span></div>
+        <div class="record-sub">${r.date}${r.remark ? ' · ' + r.remark : ''}</div>
+        ${r.code ? `<div class="record-sub" style="margin-top:4px;">兑换码：<strong style="color:#006d9c;letter-spacing:2px;font-size:16px;">${r.code}</strong></div>` : ''}
       </div>
       <div class="record-right">
-        <div class="record-points points-sub">-${r.cost}</div>
+        <div class="record-points points-sub">${r.type === 'voucher' ? '赠送' : '-' + r.cost}</div>
         ${r.status !== 'redeemed' ? `<button class="record-del" onclick="delVRedeem('${r.id}')">撤销</button>` : ''}
       </div>
     </div>`).join('');
@@ -1148,7 +1231,7 @@ function showVolDetail(id) {
     '<div class="empty-tip" style="padding:8px 0;">暂无</div>';
   const rl = document.getElementById('detailRedeemList');
   rl.innerHTML = (vol.redeemRecords||[]).length ?
-    vol.redeemRecords.map(r => `<div class="detail-row"><span class="label">${r.date} ${r.prizeName}</span><span class="value" style="color:#e76f51;">-${r.cost}分 <span class="status-tag ${r.status==='redeemed'?'status-redeemed':'status-pending'}">${r.status==='redeemed'?'已核销':'待核销'}</span></span></div>`).join('') :
+    vol.redeemRecords.map(r => `<div class="detail-row"><span class="label">${r.date} ${r.prizeName}${r.code ? ` <strong style="color:#006d9c;">${r.code}</strong>` : ''}</span><span class="value" style="color:#e76f51;">${r.type === 'voucher' ? '赠送' : '-' + r.cost + '分'} <span class="status-tag ${r.status==='redeemed'?'status-redeemed':'status-pending'}">${r.status==='redeemed'?'已核销':'待核销'}</span></span></div>`).join('') :
     '<div class="empty-tip" style="padding:8px 0;">暂无</div>';
   showModal('volDetailModal');
 }
@@ -1182,6 +1265,82 @@ async function confirmResetPwd() {
     closeModal('resetPwdModal');
     closeModal('volDetailModal');
     showToast('密码已重置为：' + newPwd);
+  } catch(e) {}
+}
+
+// 编辑志愿者基本信息
+function showEditVolModal() {
+  const vol = allVolunteers.find(v => v.id === currentDetailId);
+  if (!vol) return;
+  document.getElementById('editVolName').value = vol.name;
+  document.getElementById('editVolSid').value = vol.sid || '';
+  showModal('editVolModal');
+}
+
+async function confirmEditVol() {
+  const name = document.getElementById('editVolName').value.trim();
+  const sid = document.getElementById('editVolSid').value.trim();
+  if (!name) { showToast('姓名不能为空'); return; }
+  if (!sid) { showToast('学号不能为空'); return; }
+  try {
+    await api('/api/admin/volunteer/' + currentDetailId, 'PUT', { name, sid });
+    closeModal('editVolModal');
+    closeModal('volDetailModal');
+    await loadAdminData();
+    showToast('志愿者信息已更新');
+  } catch(e) {}
+}
+
+// 管理员补录时长
+function showAddHoursModal() {
+  const vol = allVolunteers.find(v => v.id === currentDetailId);
+  if (!vol) return;
+  document.getElementById('addHoursName').textContent = vol.name + '（' + vol.sid + '）';
+  document.getElementById('addHoursActivity').value = '';
+  document.getElementById('addHoursDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('addHoursValue').value = '';
+  showModal('addHoursModal');
+}
+
+async function confirmAddHours() {
+  const activity = document.getElementById('addHoursActivity').value.trim();
+  const date = document.getElementById('addHoursDate').value;
+  const hours = parseFloat(document.getElementById('addHoursValue').value);
+  if (!activity) { showToast('请输入活动名称'); return; }
+  if (!hours || hours <= 0) { showToast('请输入有效时长'); return; }
+  try {
+    await api('/api/admin/volunteer/' + currentDetailId + '/hours', 'POST', { activity, date, hours });
+    closeModal('addHoursModal');
+    closeModal('volDetailModal');
+    await loadAdminData();
+    showToast(`已补录 ${hours} 小时（+${hours * 10} 积分）`);
+  } catch(e) {}
+}
+
+// 发放兑换券
+function showVoucherModal() {
+  if (!allVolunteers.length) { showToast('暂无志愿者，请先导入名单'); return; }
+  const prizes = allPrizes.filter(p => !p.locked);
+  if (!prizes.length) { showToast('暂无可用奖品'); return; }
+  document.getElementById('voucherVol').innerHTML = allVolunteers.map(v => `<option value="${v.id}">${v.name}（${v.sid || '-'}）</option>`).join('');
+  document.getElementById('voucherPrize').innerHTML = prizes.map(p => `<option value="${p.id}">${p.emoji} ${p.name}</option>`).join('');
+  document.getElementById('voucherRemark').value = '';
+  document.getElementById('voucherResult').style.display = 'none';
+  document.getElementById('voucherConfirmBtn').style.display = '';
+  showModal('voucherModal');
+}
+
+async function confirmVoucher() {
+  const volunteerId = document.getElementById('voucherVol').value;
+  const prizeId = document.getElementById('voucherPrize').value;
+  const remark = document.getElementById('voucherRemark').value.trim();
+  if (!volunteerId || !prizeId) { showToast('请选择志愿者和奖品'); return; }
+  try {
+    const data = await api('/api/admin/vouchers', 'POST', { volunteerId, prizeId, remark });
+    document.getElementById('voucherCode').textContent = data.record.code;
+    document.getElementById('voucherResult').style.display = 'block';
+    document.getElementById('voucherConfirmBtn').style.display = 'none';
+    await loadRedeemRecords();
   } catch(e) {}
 }
 
@@ -1298,11 +1457,12 @@ function renderRedeemManage(records) {
   el.innerHTML = records.map(r => `
     <div class="record-item">
       <div class="record-left">
-        <div class="record-title">${r.volName}（${r.volSid||'-'}）- ${r.prizeName}</div>
+        <div class="record-title">${r.volName}（${r.volSid||'-'}）- ${r.prizeName}${r.type === 'voucher' ? ' <span class="status-tag" style="background:#7c5cbf;color:#fff;">发放券</span>' : ''}</div>
         <div class="record-sub">
-          ${r.date} · -${r.cost}积分
+          ${r.date} · ${r.type === 'voucher' ? '免费发放' : '-' + r.cost + '积分'}${r.remark ? ' · ' + r.remark : ''}
           <span class="status-tag ${r.status==='redeemed'?'status-redeemed':'status-pending'}">${r.status==='redeemed'?'已核销':'待核销'}</span>
         </div>
+        ${r.code ? `<div class="record-sub" style="margin-top:3px;">兑换码：<strong style="color:#006d9c;letter-spacing:1px;font-size:14px;">${r.code}</strong></div>` : ''}
       </div>
       <div class="record-right">
         ${r.status === 'pending' ?
@@ -1314,9 +1474,9 @@ function renderRedeemManage(records) {
 
 async function verifyRedeem(recordId) {
   try {
-    await api('/api/admin/redeem/' + recordId + '/verify', 'POST');
+    const data = await api('/api/admin/redeem/' + recordId + '/verify', 'POST');
     await loadRedeemRecords();
-    showToast('已核销');
+    showToast(data.record && data.record.code ? '已核销，兑换码：' + data.record.code : '已核销');
   } catch(e) {}
 }
 
@@ -1327,6 +1487,88 @@ async function unverifyRedeem(recordId) {
     await loadRedeemRecords();
     showToast('已撤销核销');
   } catch(e) {}
+}
+
+// ============ 导入 ============
+let pendingBackup = null;
+
+function showImportResult(html) {
+  const box = document.getElementById('importResult');
+  box.innerHTML = html;
+  box.style.display = 'block';
+}
+
+async function handleBackupFile(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data.volunteers)) throw new Error('不是有效的备份文件');
+    pendingBackup = data;
+    const hours = data.volunteers.reduce((s, v) => s + ((v.hoursRecords || []).length), 0);
+    const redeems = data.volunteers.reduce((s, v) => s + ((v.redeemRecords || []).length), 0);
+    document.getElementById('backupSummary').innerHTML =
+      `📄 文件：${file.name}<br>👥 志愿者：${data.volunteers.length} 人<br>⏱️ 时长记录：${hours} 条<br>🎁 兑换记录：${redeems} 条<br>🎁 奖品配置：${Array.isArray(data.prizes) ? data.prizes.length + ' 项（仅覆盖导入时恢复）' : '无'}<br>🕐 备份时间：${data.exportTime || '未知'}`;
+    document.getElementById('backupPreview').style.display = 'block';
+  } catch (err) {
+    pendingBackup = null;
+    document.getElementById('backupPreview').style.display = 'none';
+    showToast('文件解析失败：请选择本平台导出的 JSON 备份文件');
+  }
+}
+
+async function doImportBackup(mode) {
+  if (!pendingBackup) return;
+  if (mode === 'replace') {
+    if (!confirm('⚠️ 覆盖导入将清空当前所有志愿者数据，再用备份恢复。确定继续？')) return;
+    if (!confirm('再次确认：当前数据将被替换（系统会自动保留一份导入前快照）')) return;
+  } else {
+    if (!confirm(`合并导入：备份中的 ${pendingBackup.volunteers.length} 名志愿者将并入现有数据，学号相同的跳过。继续？`)) return;
+  }
+  try {
+    const res = await api('/api/admin/import', 'POST', { volunteers: pendingBackup.volunteers, prizes: pendingBackup.prizes, mode });
+    let msg = `✅ 导入完成：新增 ${res.added} 人，跳过 ${res.skipped} 人，当前共 ${res.total} 人`;
+    if (res.invalid) msg += `<br>⚠️ ${res.invalid} 条记录因缺少姓名或学号被忽略`;
+    showImportResult(msg);
+    document.getElementById('backupPreview').style.display = 'none';
+    pendingBackup = null;
+    await loadAdminData();
+    showToast('导入成功');
+  } catch (e) {}
+}
+
+async function handleCsvFile(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    document.getElementById('csvText').value = await file.text();
+    showToast('文件已读取，请确认内容后点击「导入名单」');
+  } catch (err) { showToast('文件读取失败'); }
+}
+
+async function importVolunteerList() {
+  const csv = document.getElementById('csvText').value.trim();
+  if (!csv) { showToast('请先粘贴名单或选择 CSV 文件'); return; }
+  const updateExisting = document.getElementById('csvUpdateExisting').checked;
+  if (!confirm(updateExisting ? '确定导入？同学号的已有志愿者将被更新密码/补录时长。' : '确定导入这份名单？相同学号会自动跳过。')) return;
+  try {
+    const res = await api('/api/admin/import/volunteers', 'POST', { csv, updateExisting });
+    let msg = `✅ 导入完成：新增 ${res.added} 人`;
+    if (res.updated) msg += `，更新 ${res.updated} 人（密码/时长）`;
+    msg += `，跳过 ${res.skipped} 人`;
+    if (res.errors && res.errors.length) {
+      msg += '<br>⚠️ 以下行未导入：' + res.errors.slice(0, 10).map(x => `第${x.line}行（${x.reason}）`).join('、');
+      if (res.errors.length > 10) msg += ` 等 ${res.errors.length} 行`;
+    }
+    if (res.added > 0) msg += '<br>🔑 新志愿者可使用学号 + 初始密码登录';
+    showImportResult(msg);
+    document.getElementById('csvText').value = '';
+    await loadAdminData();
+    showToast('导入成功');
+  } catch (e) {}
 }
 
 // ============ 导出 ============

@@ -41,6 +41,14 @@ function loadData() {
 function saveData() { try { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); } catch (e) { console.error('保存数据失败:', e); } }
 const db = loadData();
 function genId() { return Date.now().toString(36) + crypto.randomBytes(4).toString('hex'); }
+// 随机兑换码：8位，去掉易混淆字符 0/O/1/I/L
+function genCode() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  const bytes = crypto.randomBytes(8);
+  for (let i = 0; i < 8; i++) code += chars[bytes[i] % chars.length];
+  return code.slice(0, 4) + '-' + code.slice(4);
+}
 function calcStats(vol) {
   const totalHours = (vol.hoursRecords || []).reduce((s, r) => s + r.hours, 0);
   const totalPoints = totalHours * 10;
@@ -158,7 +166,7 @@ app.get('/api/admin/redeem-records', (req, res) => {
   all.sort((a, b) => b.createdAt - a.createdAt); res.json(all);
 });
 app.post('/api/admin/redeem/:recordId/verify', (req, res) => {
-  for (const vol of db.volunteers) { const record = (vol.redeemRecords || []).find(r => r.id === req.params.recordId); if (record) { record.status = 'redeemed'; record.verifiedAt = Date.now(); saveData(); return res.json({ success: true, record }); } }
+  for (const vol of db.volunteers) { const record = (vol.redeemRecords || []).find(r => r.id === req.params.recordId); if (record) { record.status = 'redeemed'; record.verifiedAt = Date.now(); if (!record.code) record.code = genCode(); saveData(); return res.json({ success: true, record }); } }
   res.status(404).json({ error: '兑换记录不存在' });
 });
 app.post('/api/admin/redeem/:recordId/unverify', (req, res) => {
@@ -184,6 +192,48 @@ app.post('/api/admin/volunteer/:id/reset-password', (req, res) => {
   res.json({ success: true });
 });
 
+// 管理员编辑志愿者基本信息（姓名/学号）
+app.put('/api/admin/volunteer/:id', (req, res) => {
+  const vol = db.volunteers.find(v => v.id === req.params.id);
+  if (!vol) return res.status(404).json({ error: '志愿者不存在' });
+  const { name, sid } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: '姓名不能为空' });
+  if (!sid || !sid.trim()) return res.status(400).json({ error: '学号不能为空' });
+  const dup = db.volunteers.find(v => v.sid === sid.trim() && v.id !== vol.id);
+  if (dup) return res.status(400).json({ error: '该学号已被其他志愿者使用' });
+  vol.name = name.trim(); vol.sid = sid.trim(); saveData();
+  res.json({ success: true, volunteer: { id: vol.id, name: vol.name, sid: vol.sid } });
+});
+
+// 管理员补录志愿时长（不受时长提交开关限制，用于历史数据补录）
+app.post('/api/admin/volunteer/:id/hours', (req, res) => {
+  const vol = db.volunteers.find(v => v.id === req.params.id);
+  if (!vol) return res.status(404).json({ error: '志愿者不存在' });
+  const { activity, date, hours } = req.body;
+  if (!activity || !activity.trim()) return res.status(400).json({ error: '请输入活动名称' });
+  if (!hours || hours <= 0) return res.status(400).json({ error: '请输入有效时长' });
+  const record = { id: genId(), activity: activity.trim(), date: date || new Date().toISOString().split('T')[0], hours: parseFloat(hours), points: parseFloat(hours) * 10, createdAt: Date.now() };
+  vol.hoursRecords.unshift(record); saveData();
+  res.json({ success: true, record, stats: calcStats(vol) });
+});
+
+// 管理员直接发放兑换券（不扣积分，生成带兑换码的待核销记录）
+app.post('/api/admin/vouchers', (req, res) => {
+  const { volunteerId, prizeId, remark } = req.body;
+  const vol = db.volunteers.find(v => v.id === volunteerId);
+  if (!vol) return res.status(404).json({ error: '志愿者不存在' });
+  const prize = db.prizes.find(p => String(p.id) === String(prizeId));
+  if (!prize || prize.locked) return res.status(400).json({ error: '奖品不可用' });
+  const record = {
+    id: genId(), date: new Date().toISOString().split('T')[0],
+    prizeId: prize.id, prizeName: prize.name, cost: 0,
+    type: 'voucher', remark: (remark || '').trim().slice(0, 50),
+    status: 'pending', code: genCode(), createdAt: Date.now()
+  };
+  vol.redeemRecords.unshift(record); saveData();
+  res.json({ success: true, record, volunteer: { id: vol.id, name: vol.name, sid: vol.sid } });
+});
+
 // CSV导出（不需要额外依赖，Excel可直接打开）
 app.get('/api/admin/export/excel', (req, res) => {
   const BOM = '\uFEFF';
@@ -191,8 +241,8 @@ app.get('/api/admin/export/excel', (req, res) => {
   db.volunteers.forEach((v, i) => { const s = calcStats(v); csv += `${i+1},${v.name},${v.sid},${s.totalHours.toFixed(1)},${s.totalPoints},${s.usedPoints},${s.balance}\n`; });
   csv += '\n\n时长明细\n姓名,学号,活动名称,日期,时长(小时),获得积分\n';
   db.volunteers.forEach(v => { (v.hoursRecords || []).forEach(r => { csv += `${v.name},${v.sid},${r.activity},${r.date},${r.hours},${r.points}\n`; }); });
-  csv += '\n\n兑换记录\n姓名,学号,奖品名称,消耗积分,兑换日期,状态\n';
-  db.volunteers.forEach(v => { (v.redeemRecords || []).forEach(r => { csv += `${v.name},${v.sid},${r.prizeName},${r.cost},${r.date},${r.status === 'redeemed' ? '已核销' : '待核销'}\n`; }); });
+  csv += '\n\n兑换记录\n姓名,学号,奖品名称,消耗积分,兑换日期,状态,兑换码\n';
+  db.volunteers.forEach(v => { (v.redeemRecords || []).forEach(r => { csv += `${v.name},${v.sid},${r.prizeName},${r.cost},${r.date},${r.status === 'redeemed' ? '已核销' : '待核销'},${r.code || ''}\n`; }); });
   const filename = encodeURIComponent(`志愿者数据_${new Date().toISOString().split('T')[0]}.csv`);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`);
@@ -200,6 +250,116 @@ app.get('/api/admin/export/excel', (req, res) => {
 });
 
 app.get('/api/admin/export', (req, res) => res.json({ version: 2, exportTime: new Date().toLocaleString('zh-CN'), volunteers: db.volunteers, prizes: db.prizes }));
+
+// ============ 数据导入 ============
+// 导入前自动备份当前数据（保留最近一份快照）
+function backupBeforeImport() {
+  try { if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_FILE + '.before-import'); } catch (e) { console.error('导入前备份失败:', e); }
+}
+
+// 清洗志愿者数据（导入属于外部输入，逐字段校验）
+function sanitizeVolunteer(v) {
+  if (!v || typeof v !== 'object') return null;
+  const name = String(v.name || '').trim();
+  const sid = String(v.sid || '').trim();
+  if (!name || !sid) return null;
+  return {
+    id: typeof v.id === 'string' && v.id ? v.id : genId(),
+    name, sid,
+    password: typeof v.password === 'string' && v.password ? v.password : DEFAULT_PASSWORD,
+    hoursRecords: (Array.isArray(v.hoursRecords) ? v.hoursRecords : []).filter(r => r && r.activity).map(r => ({
+      id: r.id || genId(), activity: String(r.activity), date: r.date || '',
+      hours: parseFloat(r.hours) || 0,
+      points: typeof r.points === 'number' ? r.points : (parseFloat(r.hours) || 0) * 10,
+      createdAt: r.createdAt || Date.now()
+    })),
+    redeemRecords: (Array.isArray(v.redeemRecords) ? v.redeemRecords : []).filter(r => r && r.prizeName).map(r => ({
+      id: r.id || genId(), date: r.date || '', prizeId: r.prizeId, prizeName: String(r.prizeName),
+      cost: parseInt(r.cost) || 0, status: r.status === 'redeemed' ? 'redeemed' : 'pending',
+      type: r.type === 'voucher' ? 'voucher' : undefined,
+      remark: typeof r.remark === 'string' ? r.remark : undefined,
+      code: typeof r.code === 'string' ? r.code : undefined,
+      createdAt: r.createdAt || Date.now(), verifiedAt: r.verifiedAt
+    })),
+    createdAt: typeof v.createdAt === 'number' ? v.createdAt : Date.now()
+  };
+}
+
+// JSON 全量导入（对应 /api/admin/export 的备份文件）
+// body: { volunteers: [...], prizes?: [...], mode: 'merge' | 'replace' }
+app.post('/api/admin/import', (req, res) => {
+  const body = req.body || {};
+  const mode = body.mode === 'replace' ? 'replace' : 'merge';
+  if (!Array.isArray(body.volunteers)) return res.status(400).json({ error: '文件格式不正确：缺少 volunteers 数组，请使用本平台导出的 JSON 备份' });
+  const cleaned = body.volunteers.map(sanitizeVolunteer).filter(Boolean);
+  const invalid = body.volunteers.length - cleaned.length;
+  // 文件内部按学号去重
+  const seen = new Set(); const incoming = [];
+  for (const v of cleaned) { if (!seen.has(v.sid)) { seen.add(v.sid); incoming.push(v); } }
+  if (incoming.length === 0) return res.status(400).json({ error: '没有可导入的有效数据（志愿者需包含姓名和学号）' });
+
+  backupBeforeImport();
+  if (mode === 'replace') {
+    db.volunteers = incoming;
+    if (Array.isArray(body.prizes) && body.prizes.length) db.prizes = body.prizes;
+    saveData();
+    return res.json({ success: true, mode, added: incoming.length, skipped: 0, invalid, total: db.volunteers.length });
+  }
+  // merge：按学号去重，已存在的跳过，不覆盖现有数据
+  const existing = new Set(db.volunteers.map(v => v.sid));
+  let added = 0, skipped = 0;
+  for (const vol of incoming) {
+    if (existing.has(vol.sid)) { skipped++; continue; }
+    db.volunteers.push(vol); existing.add(vol.sid); added++;
+  }
+  saveData();
+  res.json({ success: true, mode, added, skipped, invalid, total: db.volunteers.length });
+});
+
+// CSV/文本批量导入志愿者名单
+// 格式：姓名,学号[,初始密码][,历史时长][,活动名称]，每行一个；支持逗号/制表符分隔
+// body: { csv, updateExisting } — updateExisting=true 时，同学号已存在则更新其密码并补录时长
+app.post('/api/admin/import/volunteers', (req, res) => {
+  const text = (req.body && req.body.csv) || '';
+  const updateExisting = !!(req.body && req.body.updateExisting);
+  if (typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: '请粘贴名单内容或选择 CSV 文件' });
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const existing = new Map(db.volunteers.map(v => [v.sid, v]));
+  const toAdd = []; const errors = []; let skipped = 0, updated = 0;
+  lines.forEach((line, idx) => {
+    if (idx === 0 && /姓名|学号|name/i.test(line)) return; // 跳过表头
+    const cols = line.split(/[\t,，]/).map(c => c.trim());
+    while (cols.length && cols[cols.length - 1] === '') cols.pop(); // 去掉行尾空列，保留中间空列
+    const [name, sid, pwd, hoursStr, activity] = cols;
+    if (!name || !sid) { errors.push({ line: idx + 1, reason: '缺少姓名或学号' }); return; }
+    if (pwd && pwd.length < 4) { errors.push({ line: idx + 1, reason: '密码至少4位' }); return; }
+    const hours = hoursStr ? parseFloat(hoursStr) : 0;
+    if (hoursStr && (isNaN(hours) || hours <= 0)) { errors.push({ line: idx + 1, reason: '历史时长不是有效数字' }); return; }
+    const makeHoursRecord = () => ({
+      id: genId(), activity: (activity || '').trim() || '历史数据补录',
+      date: new Date().toISOString().split('T')[0],
+      hours, points: hours * 10, createdAt: Date.now()
+    });
+    const old = existing.get(sid);
+    if (old) {
+      if (!updateExisting) { skipped++; return; }
+      if (pwd) old.password = pwd;
+      if (hours > 0) old.hoursRecords.unshift(makeHoursRecord());
+      if (pwd || hours > 0) updated++; else skipped++;
+      return;
+    }
+    const vol = { id: genId(), name, sid, password: pwd || DEFAULT_PASSWORD, hoursRecords: [], redeemRecords: [], createdAt: Date.now() };
+    if (hours > 0) vol.hoursRecords.push(makeHoursRecord());
+    toAdd.push(vol);
+    existing.set(sid, vol);
+  });
+  if (toAdd.length || updated) {
+    backupBeforeImport();
+    db.volunteers.push(...toAdd); saveData();
+  }
+  res.json({ success: true, added: toAdd.length, updated, skipped, errors });
+});
+
 app.delete('/api/admin/clear-all', (req, res) => { db.volunteers = []; db.prizes = JSON.parse(JSON.stringify(DEFAULT_DATA.prizes)); saveData(); res.json({ success: true }); });
 app.post('/api/admin/change-password', (req, res) => {
   const { oldPassword, newPassword } = req.body;
